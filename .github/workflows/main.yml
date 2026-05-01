@@ -24,7 +24,6 @@ jobs:
           
       - name: Install dependencies
         run: pip install --force-reinstall moviepy==1.0.3 imageio-ffmpeg
-        python -c "import moviepy; print(moviepy.__version__)"
 
       - name: Install System Dependencies
         run: |
