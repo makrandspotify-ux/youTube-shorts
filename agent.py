@@ -22,7 +22,7 @@ else:
 PROJECT_ID = "shorts-auto-agent"
 LOCATION = "us-central1"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-model = GenerativeModel("gemini-2.0-flash-001")  # ✅ Valid Vertex AI model name
+model = GenerativeModel("gemini-2.5-flash")  # ✅ Valid Vertex AI model name
 
 # --- 3. GENERATE SCRIPT & VOICE ---
 print("Choosing a topic...")
