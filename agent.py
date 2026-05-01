@@ -1,208 +1,186 @@
-import os
-import re
-import random
-import platform
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from google.cloud import texttospeech, speech
 from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
 from moviepy.video.fx.all import crop
-from uploader import upload_to_youtube
+import os
+import re
+import random
+import platform
+from uploader import upload_to_youtube 
 
-# ─────────────────────────────────────────────
-# CONFIGURATION
-# ─────────────────────────────────────────────
-PROJECT_ID      = "shorts-auto-agent"
-LOCATION        = "us-central1"
-GEMINI_MODEL    = "gemini-2.5-flash"
-TTS_VOICE       = "en-US-Neural2-J"
-TTS_SPEED       = 1.2
-SAMPLE_RATE     = 44100
-MAX_DURATION    = 58.0
-CAPTION_CHUNKS  = 3
-CAPTION_FONT_SZ = 60
-BACKGROUND_VID  = "background_loop.mp4"
-VOICEOVER_FILE  = "voiceover.wav"
-OUTPUT_FILE     = "final_short.mp4"
-
+# --- MAC SPECIFIC FIX ---
 if platform.system() == "Darwin":
     if os.path.exists("/opt/homebrew/bin/magick"):
         from moviepy.config import change_settings
         change_settings({"IMAGEMAGICK_BINARY": "/opt/homebrew/bin/magick"})
     FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 else:
-    FONT_PATH = "DejaVu-Sans-Bold"
+    FONT_PATH = "DejaVu-Sans-Bold"  # ✅ GitHub Actions (Ubuntu) font
 
-# ─────────────────────────────────────────────
-# INITIALIZE
-# ─────────────────────────────────────────────
+# Sample rates
+TTS_SAMPLE_RATE = 24000  # ✅ Google Neural2 native output rate
+STT_SAMPLE_RATE = 44100  # ✅ MoviePy always rewrites WAV at this rate
+
+# --- 1. INITIALIZE ---
+PROJECT_ID = "shorts-auto-agent" 
+LOCATION = "us-central1"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-model      = GenerativeModel(GEMINI_MODEL)
-tts_client = texttospeech.TextToSpeechClient()
-stt_client = speech.SpeechClient()
+model = GenerativeModel("gemini-2.5-flash")
 
-# ─────────────────────────────────────────────
-# STEP 1 — GENERATE TOPIC & SCRIPT
-# ─────────────────────────────────────────────
-print("Generating topic...")
-topic_prompt = (
-    "Pick ONE insanely clickable YouTube Shorts topic for today "
-    "(History, Science, Mysteries, or Wildlife). "
-    "6 to 12 words. Output ONLY the topic line."
-)
+# --- 2. GENERATE SCRIPT & VOICE ---
+print("Asking Gemini to choose an amazing topic...")
+topic_prompt = """
+Pick ONE insanely clickable YouTube Shorts topic for today.
+
+Constraints:
+- Must be a real-world topic (e.g., bizarre historical facts, crazy science, deep ocean mysteries, space anomalies, true crime, or wildlife).
+- STRICTLY NO AI, tech, or futuristic meta-topics. Give me something real, grounded, and fascinating.
+- 6 to 12 words.
+- Not politics, not explicit, not medical advice.
+- Output ONLY the topic line. No quotes, no bullets, no extra text.
+""".strip()
+
 trending_topic = model.generate_content(topic_prompt).text.strip()
-print(f"Topic: {trending_topic}")
+trending_topic = re.sub(r'[\r\n]+', ' ', trending_topic).strip()
+trending_topic = re.sub(r'^[\'"\-\s]+|[\'"\-\s]+$', '', trending_topic).strip()
+print(f"Chosen topic: {trending_topic}")
 
-script_prompt = (
-    f"Write a punchy YouTube Shorts script about: {trending_topic}. "
-    "Start with an aggressive hook. No stage directions or annotations. "
-    "Length: 140-155 words."
+prompt = (
+    "Write a punchy YouTube Short script about: "
+    f"{trending_topic}. "
+    "No visual/audio cues, just spoken text. "
+    "Start with an aggressive stop-scrolling hook. "
+    "STRICT LENGTH: The script MUST be exactly between 140 and 155 words. This is critical to hit the 55-second audio mark."
 )
-raw_script    = model.generate_content(script_prompt).text
-clean_script  = re.sub(r'[\(\[].*?[\)\]]', '', raw_script).strip()
-print(f"Script ready ({len(clean_script.split())} words)")
 
-# ─────────────────────────────────────────────
-# STEP 2 — GENERATE VOICEOVER
-# ─────────────────────────────────────────────
+print("Asking Gemini to write the script...")
+script_response = model.generate_content(prompt).text
+cleaned_script = re.sub(r'\*+', '', script_response)
+cleaned_script = re.sub(r'[\(\[].*?[\)\]]', '', cleaned_script).strip()
+
 print("Generating voiceover...")
-tts_response = tts_client.synthesize_speech(
-    input=texttospeech.SynthesisInput(text=clean_script),
-    voice=texttospeech.VoiceSelectionParams(
-        language_code="en-US",
-        name=TTS_VOICE
-    ),
-    audio_config=texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-        speaking_rate=TTS_SPEED,
-        sample_rate_hertz=SAMPLE_RATE
-    )
+tts_client = texttospeech.TextToSpeechClient()
+fixed_ssml = cleaned_script.replace("AI", '<say-as interpret-as="characters">AI</say-as>')
+synthesis_input = texttospeech.SynthesisInput(ssml=f"<speak>{fixed_ssml}</speak>")
+voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Neural2-J")
+audio_config = texttospeech.AudioConfig(
+    audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+    speaking_rate=1.2,
+    sample_rate_hertz=TTS_SAMPLE_RATE  # ✅ Explicit native rate
 )
-with open(VOICEOVER_FILE, "wb") as f:
-    f.write(tts_response.audio_content)
-print("Voiceover saved.")
 
-# ─────────────────────────────────────────────
-# STEP 3 — TRIM AUDIO & FORCE MONO (before STT)
-# ─────────────────────────────────────────────
+tts_response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+with open("voiceover.wav", "wb") as out:
+    out.write(tts_response.audio_content)
+
+# --- 3. TRIM AUDIO (must happen before STT) ---
 print("Trimming audio...")
-audio_clip    = AudioFileClip(VOICEOVER_FILE)
-safe_duration = min(MAX_DURATION, audio_clip.duration)
-audio_clip    = audio_clip.subclip(0, safe_duration)
-audio_clip.write_audiofile(
-    VOICEOVER_FILE,
-    ffmpeg_params=["-ac", "1"]  # Force mono for STT compatibility
-)
+audio_clip = AudioFileClip("voiceover.wav")
+safe_duration = min(58.0, audio_clip.duration)
+audio_clip = audio_clip.subclip(0, safe_duration)
+audio_clip.write_audiofile("voiceover.wav", ffmpeg_params=["-ac", "1"])  # ✅ Trim + force mono
 print(f"Audio trimmed to {safe_duration:.1f}s")
 
-# ─────────────────────────────────────────────
-# STEP 4 — TRANSCRIBE WITH WORD TIMESTAMPS
-# ─────────────────────────────────────────────
-print("Transcribing audio...")
-with open(VOICEOVER_FILE, "rb") as f:
-    audio_bytes = f.read()
+# --- 4. GET WORD-LEVEL TIMESTAMPS ---
+print("Syncing captions...")
+stt_client = speech.SpeechClient()
 
-stt_result = stt_client.long_running_recognize(
-    config=speech.RecognitionConfig(
-        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-        sample_rate_hertz=SAMPLE_RATE,  # Match TTS output rate
-        language_code="en-US",
-        enable_word_time_offsets=True,
-        enable_automatic_punctuation=True,
-    ),
-    audio=speech.RecognitionAudio(content=audio_bytes)
-).result(timeout=90)
+with open("voiceover.wav", "rb") as audio_file:
+    content = audio_file.read()
 
-all_words = [
-    {
-        'word':  w.word.upper(),
-        'start': w.start_time.total_seconds(),
-        'end':   w.end_time.total_seconds()
-    }
-    for result in stt_result.results
-    for w in result.alternatives[0].words
-]
-print(f"Transcribed {len(all_words)} words.")
+audio_recognition = speech.RecognitionAudio(content=content)
+stt_config = speech.RecognitionConfig(
+    encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+    sample_rate_hertz=STT_SAMPLE_RATE,  # ✅ Matches MoviePy resampled rate
+    language_code="en-US",
+    enable_word_time_offsets=True,
+)
 
-# ─────────────────────────────────────────────
-# STEP 5 — VIDEO PROCESSING
-# ─────────────────────────────────────────────
-print("Processing video...")
-full_video  = VideoFileClip(BACKGROUND_VID)
-audio_clip  = AudioFileClip(VOICEOVER_FILE)
+operation = stt_client.long_running_recognize(config=stt_config, audio=audio_recognition)
+stt_result = operation.result(timeout=90)
 
-# Pick a random start point in the background
-start_time  = random.uniform(0, max(0, full_video.duration - safe_duration))
-video_bg    = full_video.subclip(start_time, start_time + safe_duration)
+all_words = []
+for result in stt_result.results:
+    for word_info in result.alternatives[0].words:
+        all_words.append({
+            'word': word_info.word.upper(),
+            'start': word_info.start_time.total_seconds(),
+            'end': word_info.end_time.total_seconds()
+        })
 
-# Crop to 9:16 portrait
-w, h         = video_bg.size
+# --- 5. PREPARE BACKGROUND VIDEO & CALCULATE DYNAMIC WIDTH ---
+print("Calculating dynamic text bounds...")
+full_video = VideoFileClip("background_loop.mp4")
+audio_clip = AudioFileClip("voiceover.wav")  # Reload trimmed version
+
+MIN_SKIP = 26
+start_time = random.uniform(MIN_SKIP, max(MIN_SKIP, full_video.duration - safe_duration))
+video_bg = full_video.subclip(start_time, start_time + safe_duration)
+
+# Calculate exactly how wide the video will be AFTER the 9:16 crop
+w, h = video_bg.size
 target_width = int(h * (9 / 16))
-video_bg     = crop(video_bg, x_center=w/2, y_center=h/2, width=target_width, height=h)
-text_width   = int(target_width * 0.85)
+final_video_width = target_width if w > target_width else w
 
-# ─────────────────────────────────────────────
-# STEP 6 — CAPTION GENERATION
-# ─────────────────────────────────────────────
-print("Generating captions...")
+# Magic Fix: The text box will now dynamically be exactly 85% of the screen width
+dynamic_text_width = int(final_video_width * 0.85)
+
+# Crop the video
+if w != target_width:
+    video_bg = crop(video_bg, x_center=w/2, y_center=h/2, width=target_width, height=h)
+
+# --- 6. CREATE DYNAMIC WRAPPING CAPTIONS ---
 word_clips = []
+chunk_size = 3 
 
-for i in range(0, len(all_words), CAPTION_CHUNKS):
-    chunk   = all_words[i:i + CAPTION_CHUNKS]
-    phrase  = " ".join(w['word'] for w in chunk)
+for i in range(0, len(all_words), chunk_size):
+    chunk = all_words[i:i + chunk_size]
+    phrase = " ".join([w['word'] for w in chunk])
     start_t = chunk[0]['start']
-    end_t   = chunk[-1]['end']
-    dur     = min(end_t - start_t, safe_duration - start_t)
+    end_t = chunk[-1]['end']
 
-    if start_t >= safe_duration or dur <= 0:
+    if start_t >= safe_duration or (end_t - start_t) <= 0:
         continue
 
-    word_clips.append(
-        TextClip(
-            phrase,
-            fontsize=CAPTION_FONT_SZ,
-            color='yellow',
-            font=FONT_PATH,
-            stroke_color='black',
-            stroke_width=2,
-            method='caption',
-            size=(text_width, None)
-        )
-        .set_start(start_t)
-        .set_duration(dur)
-        .set_position(('center', 'center'))
-    )
+    caption_clip = TextClip(
+        phrase, 
+        fontsize=60, 
+        color='yellow', 
+        font=FONT_PATH,
+        stroke_color='black',  
+        stroke_width=2,
+        method='caption',
+        size=(dynamic_text_width, None)
+    ).set_start(start_t).set_duration(end_t - start_t).set_position(('center', 'center'))
 
-print(f"Generated {len(word_clips)} caption clips.")
+    word_clips.append(caption_clip)
 
-# ─────────────────────────────────────────────
-# STEP 7 — EXPORT
-# ─────────────────────────────────────────────
-print("Exporting final video...")
-CompositeVideoClip([video_bg] + word_clips) \
-    .set_audio(audio_clip) \
-    .write_videofile(
-        OUTPUT_FILE,
-        fps=24,
-        codec="libx264",
-        audio_codec="aac",
-        threads=4,          # Faster encoding
-        preset="fast",      # Balance speed vs file size
-        logger=None         # Suppress verbose ffmpeg output
-    )
-print(f"Exported: {OUTPUT_FILE}")
+# --- 7. COMPILE & EXPORT ---
+print("Rendering final video...")
+final_video = CompositeVideoClip([video_bg] + word_clips)
+final_video = final_video.set_audio(audio_clip)
 
-# ─────────────────────────────────────────────
-# STEP 8 — GENERATE METADATA & UPLOAD
-# ─────────────────────────────────────────────
-print("Generating metadata...")
-metadata_prompt = (
-    f"Write a punchy 2-sentence YouTube description and 4 relevant hashtags "
-    f"for a Shorts video about: {trending_topic}. "
-    "Format: description first, then hashtags on a new line."
-)
-metadata = model.generate_content(metadata_prompt).text.strip()
+final_video.write_videofile("final_viral_short.mp4", fps=24, codec="libx264", audio_codec="aac")
+print("\nSUCCESS! Video rendered in perfect Shorts format.")
 
-print("Uploading to YouTube...")
-upload_to_youtube(OUTPUT_FILE, f"{trending_topic} #shorts", metadata)
-print("Done! ✅")
+# --- 8. AUTO-UPLOAD TO YOUTUBE ---
+print("\nAsking Gemini to write the YouTube description and hashtags...")
+
+metadata_prompt = f"""
+Write a highly engaging, punchy YouTube Shorts description for a video about: '{trending_topic}'.
+- Keep it under 3 sentences.
+- Add an engaging question for the viewers to answer in the comments.
+- Include 4-5 highly relevant viral hashtags at the bottom (always include #shorts).
+- Output plain text only, no markdown formatting (like asterisks).
+"""
+
+generated_desc = model.generate_content(metadata_prompt).text.strip()
+
+print("\n--- Generated Metadata ---")
+print(generated_desc)
+print("--------------------------\n")
+
+print("Initializing YouTube Upload...")
+video_title = f"{trending_topic} 🤯 #shorts"
+upload_to_youtube("final_viral_short.mp4", video_title, generated_desc)
