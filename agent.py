@@ -6,7 +6,7 @@ import vertexai
 from vertexai.generative_models import GenerativeModel
 from google.cloud import texttospeech, speech
 from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
-from moviepy.video.fx.all import crop  # ✅ Only one crop import, correct v1 style
+from moviepy.video.fx.all import crop
 from uploader import upload_to_youtube 
 
 # --- 1. OS-SPECIFIC SETUP ---
@@ -22,7 +22,7 @@ else:
 PROJECT_ID = "shorts-auto-agent"
 LOCATION = "us-central1"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-model = GenerativeModel("gemini-2.5-flash")  # ✅ Fixed: correct Vertex AI model name
+model = GenerativeModel("gemini-2.0-flash-001")  # ✅ Valid Vertex AI model name
 
 # --- 3. GENERATE SCRIPT & VOICE ---
 print("Choosing a topic...")
@@ -52,12 +52,20 @@ tts_response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, 
 with open("voiceover.wav", "wb") as out:
     out.write(tts_response.audio_content)
 
-# --- 4. GET WORD-LEVEL TIMESTAMPS ---
+# --- 4. TRIM AUDIO TO 58s (must happen before STT) ---
+print("Trimming audio...")
+audio_clip = AudioFileClip("voiceover.wav")
+safe_duration = min(58.0, audio_clip.duration)
+audio_clip = audio_clip.subclip(0, safe_duration)
+audio_clip.write_audiofile("voiceover.wav")  # ✅ Overwrite with trimmed version — stays under inline STT limit
+
+# --- 5. GET WORD-LEVEL TIMESTAMPS ---
+print("Transcribing audio...")
 stt_client = speech.SpeechClient()
 with open("voiceover.wav", "rb") as audio_file:
     content = audio_file.read()
 
-audio_recognition = speech.RecognitionAudio(content=content)
+audio_recognition = speech.RecognitionAudio(content=content)  # ✅ Safe now, always ≤58s
 stt_config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
     language_code="en-US",
@@ -76,13 +84,10 @@ for result in stt_result.results:
             'end': word_info.end_time.total_seconds()
         })
 
-# --- 5. VIDEO PROCESSING ---
+# --- 6. VIDEO PROCESSING ---
 print("Editing video...")
 full_video = VideoFileClip("background_loop.mp4")
-audio_clip = AudioFileClip("voiceover.wav")
-
-safe_duration = min(58.0, audio_clip.duration)
-audio_clip = audio_clip.subclip(0, safe_duration)
+audio_clip = AudioFileClip("voiceover.wav")  # Reload trimmed version
 
 start_time = random.uniform(0, max(0, full_video.duration - safe_duration))
 video_bg = full_video.subclip(start_time, start_time + safe_duration)
@@ -90,10 +95,10 @@ video_bg = full_video.subclip(start_time, start_time + safe_duration)
 # Dynamic 9:16 Crop & Width Calculation
 w, h = video_bg.size
 target_width = int(h * (9 / 16))
-video_bg = crop(video_bg, x_center=w/2, y_center=h/2, width=target_width, height=h)  # ✅ Fixed: v1 style
+video_bg = crop(video_bg, x_center=w/2, y_center=h/2, width=target_width, height=h)
 text_width = int(target_width * 0.85)
 
-# --- 6. CAPTION GENERATION ---
+# --- 7. CAPTION GENERATION ---
 word_clips = []
 chunk_size = 3
 
@@ -116,7 +121,7 @@ for i in range(0, len(all_words), chunk_size):
         ).set_start(start_t).set_duration(min(end_t - start_t, safe_duration - start_t)).set_position(('center', 'center'))
         word_clips.append(caption_clip)
 
-# --- 7. EXPORT & UPLOAD ---
+# --- 8. EXPORT & UPLOAD ---
 final_video = CompositeVideoClip([video_bg] + word_clips).set_audio(audio_clip)
 final_video.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac")
 
