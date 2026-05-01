@@ -5,7 +5,8 @@ import platform
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from google.cloud import texttospeech, speech
-from moviepy import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
+from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
+from moviepy.video.fx.all import crop
 from moviepy.video.fx import Crop
 from uploader import upload_to_youtube 
 
