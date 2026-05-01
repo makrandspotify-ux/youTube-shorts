@@ -6,24 +6,23 @@ import vertexai
 from vertexai.generative_models import GenerativeModel
 from google.cloud import texttospeech, speech
 from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
-from moviepy.video.fx.all import crop
-from moviepy.video.fx import crop
+from moviepy.video.fx.all import crop  # ✅ Only one crop import, correct v1 style
 from uploader import upload_to_youtube 
 
 # --- 1. OS-SPECIFIC SETUP ---
-if platform.system() == "Darwin":  # Mac Setup
+if platform.system() == "Darwin":
     if os.path.exists("/opt/homebrew/bin/magick"):
         from moviepy.config import change_settings
         change_settings({"IMAGEMAGICK_BINARY": "/opt/homebrew/bin/magick"})
     FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
-else:  # GitHub Actions (Ubuntu Linux) Setup
-    FONT_PATH = "DejaVu-Sans-Bold" 
+else:
+    FONT_PATH = "DejaVu-Sans-Bold"
 
 # --- 2. INITIALIZE GOOGLE CLOUD ---
-PROJECT_ID = "shorts-auto-agent" 
+PROJECT_ID = "shorts-auto-agent"
 LOCATION = "us-central1"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-model = GenerativeModel("gemini-2.5-flash")
+model = GenerativeModel("gemini-2.0-flash-001")  # ✅ Fixed: correct Vertex AI model name
 
 # --- 3. GENERATE SCRIPT & VOICE ---
 print("Choosing a topic...")
@@ -88,15 +87,15 @@ audio_clip = audio_clip.subclip(0, safe_duration)
 start_time = random.uniform(0, max(0, full_video.duration - safe_duration))
 video_bg = full_video.subclip(start_time, start_time + safe_duration)
 
-# Dynamic 9:16 crop & Width Calculation
+# Dynamic 9:16 Crop & Width Calculation
 w, h = video_bg.size
 target_width = int(h * (9 / 16))
-video_bg = video_bg.with_effects([crop(x_center=w/2, y_center=h/2, width=target_width, height=h)])
-text_width = int(target_width * 0.85) # Ensure text doesn't hit edges
+video_bg = crop(video_bg, x_center=w/2, y_center=h/2, width=target_width, height=h)  # ✅ Fixed: v1 style
+text_width = int(target_width * 0.85)
 
 # --- 6. CAPTION GENERATION ---
 word_clips = []
-chunk_size = 3 
+chunk_size = 3
 
 for i in range(0, len(all_words), chunk_size):
     chunk = all_words[i:i + chunk_size]
@@ -106,11 +105,11 @@ for i in range(0, len(all_words), chunk_size):
 
     if start_t < safe_duration:
         caption_clip = TextClip(
-            phrase, 
-            fontsize=60, 
-            color='yellow', 
+            phrase,
+            fontsize=60,
+            color='yellow',
             font=FONT_PATH,
-            stroke_color='black',  
+            stroke_color='black',
             stroke_width=2,
             method='caption',
             size=(text_width, None)
