@@ -22,7 +22,7 @@ else:
 PROJECT_ID = "shorts-auto-agent"
 LOCATION = "us-central1"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-model = GenerativeModel("gemini-2.5-flash")  # ✅ Valid Vertex AI model name
+model = GenerativeModel("gemini-2.5-flash")
 
 # --- 3. GENERATE SCRIPT & VOICE ---
 print("Choosing a topic...")
@@ -57,7 +57,8 @@ print("Trimming audio...")
 audio_clip = AudioFileClip("voiceover.wav")
 safe_duration = min(58.0, audio_clip.duration)
 audio_clip = audio_clip.subclip(0, safe_duration)
-audio_clip.write_audiofile("voiceover.wav")  # ✅ Overwrite with trimmed version — stays under inline STT limit
+audio_clip.set_fps(16000)
+audio_clip.write_audiofile("voiceover.wav", ffmpeg_params=["-ac", "1"])  # ✅ Force mono for STT
 
 # --- 5. GET WORD-LEVEL TIMESTAMPS ---
 print("Transcribing audio...")
@@ -65,7 +66,7 @@ stt_client = speech.SpeechClient()
 with open("voiceover.wav", "rb") as audio_file:
     content = audio_file.read()
 
-audio_recognition = speech.RecognitionAudio(content=content)  # ✅ Safe now, always ≤58s
+audio_recognition = speech.RecognitionAudio(content=content)
 stt_config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
     language_code="en-US",
