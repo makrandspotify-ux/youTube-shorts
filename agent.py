@@ -7,7 +7,7 @@ from vertexai.generative_models import GenerativeModel
 from google.cloud import texttospeech, speech
 from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
 from moviepy.video.fx.all import crop
-from moviepy.video.fx import Crop
+from moviepy.video.fx import crop
 from uploader import upload_to_youtube 
 
 # --- 1. OS-SPECIFIC SETUP ---
@@ -88,10 +88,10 @@ audio_clip = audio_clip.subclip(0, safe_duration)
 start_time = random.uniform(0, max(0, full_video.duration - safe_duration))
 video_bg = full_video.subclip(start_time, start_time + safe_duration)
 
-# Dynamic 9:16 Crop & Width Calculation
+# Dynamic 9:16 crop & Width Calculation
 w, h = video_bg.size
 target_width = int(h * (9 / 16))
-video_bg = video_bg.with_effects([Crop(x_center=w/2, y_center=h/2, width=target_width, height=h)])
+video_bg = video_bg.with_effects([crop(x_center=w/2, y_center=h/2, width=target_width, height=h)])
 text_width = int(target_width * 0.85) # Ensure text doesn't hit edges
 
 # --- 6. CAPTION GENERATION ---
