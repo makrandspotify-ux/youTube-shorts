@@ -1,0 +1,12 @@
+# Python virtual environment
+venv/
+__pycache__/
+
+# Sensitive Credentials
+client_secrets.json
+google_credentials.json
+token.pickle
+token_b64.txt
+
+# Mac system files
+.DS_Store
