@@ -1,66 +1,53 @@
-import vertexai
-from vertexai.generative_models import GenerativeModel
-from google.cloud import texttospeech, speech
-from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
-from moviepy.video.fx.all import crop
 import os
 import re
 import random
+import platform
+import vertexai
+from vertexai.generative_models import GenerativeModel
+from google.cloud import texttospeech, speech
+from moviepy.video.VideoClip import TextClip
+from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.video.io.VideoFileClip import VideoFileClip
+from moviepy.audio.io.AudioFileClip import AudioFileClip
+from moviepy.video.fx.all import crop
 from uploader import upload_to_youtube 
 
-import platform
-
-# --- OS SPECIFIC SETUP ---
-if platform.system() == "Darwin":  # If running on your Mac
+# --- 1. OS-SPECIFIC SETUP ---
+if platform.system() == "Darwin":  # Mac Setup
     if os.path.exists("/opt/homebrew/bin/magick"):
         from moviepy.config import change_settings
         change_settings({"IMAGEMAGICK_BINARY": "/opt/homebrew/bin/magick"})
     FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
-else:  # If running on GitHub Actions (Ubuntu Linux)
-    # Ubuntu has different default fonts; DejaVu is standard and safe
-    FONT_PATH = "DejaVu-Sans-Bold"
+else:  # GitHub Actions (Ubuntu Linux) Setup
+    FONT_PATH = "DejaVu-Sans-Bold" 
 
-# --- 1. INITIALIZE ---
+# --- 2. INITIALIZE GOOGLE CLOUD ---
 PROJECT_ID = "shorts-auto-agent" 
 LOCATION = "us-central1"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-model = GenerativeModel("gemini-2.5-flash")
+model = GenerativeModel("gemini-1.5-flash")
 
-# --- 2. GENERATE SCRIPT & VOICE ---
-print("Asking Gemini to choose an amazing topic...")
+# --- 3. GENERATE SCRIPT & VOICE ---
+print("Choosing a topic...")
 topic_prompt = """
-Pick ONE insanely clickable YouTube Shorts topic for today.
-
-Constraints:
-- Must be a real-world topic (e.g., bizarre historical facts, crazy science, deep ocean mysteries, space anomalies, true crime, or wildlife).
-- STRICTLY NO AI, tech, or futuristic meta-topics. Give me something real, grounded, and fascinating.
-- 6 to 12 words.
-- Not politics, not explicit, not medical advice.
-- Output ONLY the topic line. No quotes, no bullets, no extra text.
+Pick ONE insanely clickable YouTube Shorts topic for today (History, Science, Mysteries, or Wildlife).
+6 to 12 words. Output ONLY the topic line.
 """.strip()
 
 trending_topic = model.generate_content(topic_prompt).text.strip()
-trending_topic = re.sub(r'[\r\n]+', ' ', trending_topic).strip()
-trending_topic = re.sub(r'^[\'"\-\s]+|[\'"\-\s]+$', '', trending_topic).strip()
-print(f"Chosen topic: {trending_topic}")
+print(f"Topic: {trending_topic}")
 
-prompt = (
-    "Write a punchy YouTube Short script about: "
-    f"{trending_topic}. "
-    "No visual/audio cues, just spoken text. "
-    "Start with an aggressive stop-scrolling hook. "
-    "STRICT LENGTH: The script MUST be exactly between 140 and 155 words. This is critical to hit the 55-second audio mark."
+script_prompt = (
+    f"Write a punchy YouTube Short script about: {trending_topic}. "
+    "Start with an aggressive hook. Length: 140-155 words."
 )
 
-print("Asking Gemini to write the script...")
-script_response = model.generate_content(prompt).text
-cleaned_script = re.sub(r'\*+', '', script_response)
-cleaned_script = re.sub(r'[\(\[].*?[\)\]]', '', cleaned_script).strip()
+script_response = model.generate_content(script_prompt).text
+cleaned_script = re.sub(r'[\(\[].*?[\)\]]', '', script_response).strip()
 
 print("Generating voiceover...")
 tts_client = texttospeech.TextToSpeechClient()
-fixed_ssml = cleaned_script.replace("AI", '<say-as interpret-as="characters">AI</say-as>')
-synthesis_input = texttospeech.SynthesisInput(ssml=f"<speak>{fixed_ssml}</speak>")
+synthesis_input = texttospeech.SynthesisInput(text=cleaned_script)
 voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Neural2-J")
 audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.LINEAR16, speaking_rate=1.2)
 
@@ -68,10 +55,8 @@ tts_response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, 
 with open("voiceover.wav", "wb") as out:
     out.write(tts_response.audio_content)
 
-# --- 3. GET WORD-LEVEL TIMESTAMPS ---
-print("Syncing captions...")
+# --- 4. GET WORD-LEVEL TIMESTAMPS ---
 stt_client = speech.SpeechClient()
-
 with open("voiceover.wav", "rb") as audio_file:
     content = audio_file.read()
 
@@ -94,32 +79,24 @@ for result in stt_result.results:
             'end': word_info.end_time.total_seconds()
         })
 
-# --- 4. PREPARE BACKGROUND VIDEO & CALCULATE DYNAMIC WIDTH ---
-print("Calculating dynamic text bounds...")
+# --- 5. VIDEO PROCESSING ---
+print("Editing video...")
 full_video = VideoFileClip("background_loop.mp4")
 audio_clip = AudioFileClip("voiceover.wav")
 
-# Enforce 58s limit
 safe_duration = min(58.0, audio_clip.duration)
 audio_clip = audio_clip.subclip(0, safe_duration)
 
-MIN_SKIP = 26
-start_time = random.uniform(MIN_SKIP, max(MIN_SKIP, full_video.duration - safe_duration))
+start_time = random.uniform(0, max(0, full_video.duration - safe_duration))
 video_bg = full_video.subclip(start_time, start_time + safe_duration)
 
-# Calculate exactly how wide the video will be AFTER the 9:16 crop
+# Dynamic 9:16 Crop & Width Calculation
 w, h = video_bg.size
 target_width = int(h * (9 / 16))
-final_video_width = target_width if w > target_width else w
+video_bg = crop(video_bg, x_center=w/2, y_center=h/2, width=target_width, height=h)
+text_width = int(target_width * 0.85) # Ensure text doesn't hit edges
 
-# Magic Fix: The text box will now dynamically be exactly 85% of the screen width
-dynamic_text_width = int(final_video_width * 0.85)
-
-# Crop the video
-if w != target_width:
-    video_bg = crop(video_bg, x_center=w/2, y_center=h/2, width=target_width, height=h)
-
-# --- 5. CREATE DYNAMIC WRAPPING CAPTIONS ---
+# --- 6. CAPTION GENERATION ---
 word_clips = []
 chunk_size = 3 
 
@@ -129,44 +106,24 @@ for i in range(0, len(all_words), chunk_size):
     start_t = chunk[0]['start']
     end_t = chunk[-1]['end']
 
-    caption_clip = TextClip(
-        phrase, 
-        fontsize=60, 
-        color='yellow', 
-        font=MAC_FONT_PATH,
-        stroke_color='black',  
-        stroke_width=2,
-        method='caption',
-        size=(dynamic_text_width, None) # Uses the mathematical screen width so it never cuts off
-    ).set_start(start_t).set_duration(end_t - start_t).set_position(('center', 'center'))
+    if start_t < safe_duration:
+        caption_clip = TextClip(
+            phrase, 
+            fontsize=60, 
+            color='yellow', 
+            font=FONT_PATH,
+            stroke_color='black',  
+            stroke_width=2,
+            method='caption',
+            size=(text_width, None)
+        ).set_start(start_t).set_duration(min(end_t - start_t, safe_duration - start_t)).set_position(('center', 'center'))
+        word_clips.append(caption_clip)
 
-    word_clips.append(caption_clip)
+# --- 7. EXPORT & UPLOAD ---
+final_video = CompositeVideoClip([video_bg] + word_clips).set_audio(audio_clip)
+final_video.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac")
 
-# --- 6. COMPILE & EXPORT ---
-print("Rendering final video...")
-final_video = CompositeVideoClip([video_bg] + word_clips)
-final_video = final_video.set_audio(audio_clip)
+metadata_prompt = f"Write a 2-sentence YouTube description and 4 hashtags for a video about {trending_topic}."
+metadata = model.generate_content(metadata_prompt).text.strip()
 
-final_video.write_videofile("final_viral_short.mp4", fps=24, codec="libx264", audio_codec="aac")
-print("\nSUCCESS! Video rendered in perfect Shorts format.")
-
-# --- 7. AUTO-UPLOAD TO YOUTUBE ---
-print("\nAsking Gemini to write the YouTube description and hashtags...")
-
-metadata_prompt = f"""
-Write a highly engaging, punchy YouTube Shorts description for a video about: '{trending_topic}'.
-- Keep it under 3 sentences.
-- Add an engaging question for the viewers to answer in the comments.
-- Include 4-5 highly relevant viral hashtags at the bottom (always include #shorts).
-- Output plain text only, no markdown formatting (like asterisks).
-"""
-
-generated_desc = model.generate_content(metadata_prompt).text.strip()
-
-print("\n--- Generated Metadata ---")
-print(generated_desc)
-print("--------------------------\n")
-
-print("Initializing YouTube Upload...")
-video_title = f"{trending_topic} 🤯 #shorts"
-upload_to_youtube("final_viral_short.mp4", video_title, generated_desc)
+upload_to_youtube("final_short.mp4", f"{trending_topic} #shorts", metadata)
