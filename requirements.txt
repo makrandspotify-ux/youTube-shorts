@@ -2,5 +2,6 @@ google-cloud-aiplatform
 google-cloud-texttospeech
 google-cloud-speech
 moviepy==1.0.3
+imageio-ffmpeg
 google-auth-oauthlib
 google-api-python-client
