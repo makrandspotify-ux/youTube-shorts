@@ -1,0 +1,49 @@
+name: Daily YouTube Shorts Agent
+
+on:
+  schedule:
+    # Runs at 19:00 UTC every day (3:00 PM EST)
+    - cron: '0 19 * * *'
+  workflow_dispatch: # Allows you to run it manually for testing
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true # Ensures your large background video is downloaded
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
+          # Policy fix to allow ImageMagick to generate text
+          sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Reconstruct Secret Auth Files
+        env:
+          TOKEN_PICKLE_BASE64: ${{ secrets.TOKEN_PICKLE_BASE64 }}
+          CLIENT_SECRETS_JSON: ${{ secrets.CLIENT_SECRETS_JSON }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          # Rebuild the YouTube and Google Cloud credentials from your GitHub Secrets
+          echo "$CLIENT_SECRETS_JSON" > client_secrets.json
+          echo "$TOKEN_PICKLE_BASE64" | base64 --decode > token.pickle
+          echo "$GOOGLE_CREDENTIALS_JSON" > google_credentials.json
+
+      - name: Run the Agent
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: google_credentials.json 
+        run: python agent.py
