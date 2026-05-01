@@ -6,21 +6,20 @@ from moviepy.video.fx.all import crop
 import os
 import re
 import random
+import wave
 import platform
 from uploader import upload_to_youtube 
 
-# --- MAC SPECIFIC FIX ---
+# --- OS SPECIFIC SETUP ---
 if platform.system() == "Darwin":
     if os.path.exists("/opt/homebrew/bin/magick"):
         from moviepy.config import change_settings
         change_settings({"IMAGEMAGICK_BINARY": "/opt/homebrew/bin/magick"})
     FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
 else:
-    FONT_PATH = "DejaVu-Sans-Bold"  # ✅ GitHub Actions (Ubuntu) font
+    FONT_PATH = "DejaVu-Sans-Bold"  # GitHub Actions (Ubuntu)
 
-# Sample rates
-TTS_SAMPLE_RATE = 24000  # ✅ Google Neural2 native output rate
-STT_SAMPLE_RATE = 44100  # ✅ MoviePy always rewrites WAV at this rate
+TTS_SAMPLE_RATE = 24000  # Google Neural2 native output rate
 
 # --- 1. INITIALIZE ---
 PROJECT_ID = "shorts-auto-agent" 
@@ -67,7 +66,7 @@ voice = texttospeech.VoiceSelectionParams(language_code="en-US", name="en-US-Neu
 audio_config = texttospeech.AudioConfig(
     audio_encoding=texttospeech.AudioEncoding.LINEAR16,
     speaking_rate=1.2,
-    sample_rate_hertz=TTS_SAMPLE_RATE  # ✅ Explicit native rate
+    sample_rate_hertz=TTS_SAMPLE_RATE  # Neural2 native rate
 )
 
 tts_response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
@@ -79,20 +78,25 @@ print("Trimming audio...")
 audio_clip = AudioFileClip("voiceover.wav")
 safe_duration = min(58.0, audio_clip.duration)
 audio_clip = audio_clip.subclip(0, safe_duration)
-audio_clip.write_audiofile("voiceover.wav", ffmpeg_params=["-ac", "1"])  # ✅ Trim + force mono
+audio_clip.write_audiofile("voiceover.wav", ffmpeg_params=["-ac", "1"])  # Trim + force mono
 print(f"Audio trimmed to {safe_duration:.1f}s")
 
 # --- 4. GET WORD-LEVEL TIMESTAMPS ---
 print("Syncing captions...")
-stt_client = speech.SpeechClient()
 
+# ✅ Read actual sample rate from file — never guess
+with wave.open("voiceover.wav", "rb") as wav_file:
+    actual_sample_rate = wav_file.getframerate()
+print(f"Detected sample rate: {actual_sample_rate} Hz")
+
+stt_client = speech.SpeechClient()
 with open("voiceover.wav", "rb") as audio_file:
     content = audio_file.read()
 
 audio_recognition = speech.RecognitionAudio(content=content)
 stt_config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-    sample_rate_hertz=STT_SAMPLE_RATE,  # ✅ Matches MoviePy resampled rate
+    sample_rate_hertz=actual_sample_rate,  # ✅ Always correct, never guessed
     language_code="en-US",
     enable_word_time_offsets=True,
 )
@@ -109,6 +113,8 @@ for result in stt_result.results:
             'end': word_info.end_time.total_seconds()
         })
 
+print(f"Transcribed {len(all_words)} words.")
+
 # --- 5. PREPARE BACKGROUND VIDEO & CALCULATE DYNAMIC WIDTH ---
 print("Calculating dynamic text bounds...")
 full_video = VideoFileClip("background_loop.mp4")
@@ -122,11 +128,9 @@ video_bg = full_video.subclip(start_time, start_time + safe_duration)
 w, h = video_bg.size
 target_width = int(h * (9 / 16))
 final_video_width = target_width if w > target_width else w
-
-# Magic Fix: The text box will now dynamically be exactly 85% of the screen width
 dynamic_text_width = int(final_video_width * 0.85)
 
-# Crop the video
+# Crop to 9:16
 if w != target_width:
     video_bg = crop(video_bg, x_center=w/2, y_center=h/2, width=target_width, height=h)
 
@@ -139,8 +143,9 @@ for i in range(0, len(all_words), chunk_size):
     phrase = " ".join([w['word'] for w in chunk])
     start_t = chunk[0]['start']
     end_t = chunk[-1]['end']
+    duration = end_t - start_t
 
-    if start_t >= safe_duration or (end_t - start_t) <= 0:
+    if start_t >= safe_duration or duration <= 0:
         continue
 
     caption_clip = TextClip(
@@ -152,7 +157,7 @@ for i in range(0, len(all_words), chunk_size):
         stroke_width=2,
         method='caption',
         size=(dynamic_text_width, None)
-    ).set_start(start_t).set_duration(end_t - start_t).set_position(('center', 'center'))
+    ).set_start(start_t).set_duration(duration).set_position(('center', 'center'))
 
     word_clips.append(caption_clip)
 
@@ -160,7 +165,6 @@ for i in range(0, len(all_words), chunk_size):
 print("Rendering final video...")
 final_video = CompositeVideoClip([video_bg] + word_clips)
 final_video = final_video.set_audio(audio_clip)
-
 final_video.write_videofile("final_viral_short.mp4", fps=24, codec="libx264", audio_codec="aac")
 print("\nSUCCESS! Video rendered in perfect Shorts format.")
 
