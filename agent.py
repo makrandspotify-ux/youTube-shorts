@@ -23,7 +23,7 @@ else:  # GitHub Actions (Ubuntu Linux) Setup
 PROJECT_ID = "shorts-auto-agent" 
 LOCATION = "us-central1"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-model = GenerativeModel("gemini-1.5-flash")
+model = GenerativeModel("gemini-2.5-flash")
 
 # --- 3. GENERATE SCRIPT & VOICE ---
 print("Choosing a topic...")
