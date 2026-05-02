@@ -1,13 +1,19 @@
-import vertexai
-from vertexai.generative_models import GenerativeModel
-from google.cloud import texttospeech, speech
-from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
-from moviepy.video.fx.all import crop
 import os
 import re
 import random
 import wave
 import platform
+import vertexai
+from vertexai.generative_models import GenerativeModel
+from google.cloud import texttospeech, speech
+
+# --- MOVIEPY V2 CLOUD IMPORTS ---
+from moviepy.video.VideoClip import TextClip
+from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.video.io.VideoFileClip import VideoFileClip
+from moviepy.audio.io.AudioFileClip import AudioFileClip
+from moviepy.video.fx.all import crop
+
 from uploader import upload_to_youtube 
 
 # --- OS SPECIFIC SETUP ---
@@ -70,21 +76,29 @@ audio_config = texttospeech.AudioConfig(
 )
 
 tts_response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
-with open("voiceover.wav", "wb") as out:
+
+# ✅ RAW AUDIO FIX: Save initial file separately to prevent FFmpeg corruption
+with open("voiceover_raw.wav", "wb") as out:
     out.write(tts_response.audio_content)
 
 # --- 3. TRIM AUDIO (must happen before STT) ---
 print("Trimming audio...")
-audio_clip = AudioFileClip("voiceover.wav")
-safe_duration = min(58.0, audio_clip.duration)
-audio_clip = audio_clip.subclip(0, safe_duration)
-audio_clip.write_audiofile("voiceover.wav", ffmpeg_params=["-ac", "1"])  # Trim + force mono
+raw_audio_clip = AudioFileClip("voiceover_raw.wav")
+safe_duration = min(58.0, raw_audio_clip.duration)
+
+# Process from the raw file and save to the final file
+trimmed_clip = raw_audio_clip.subclip(0, safe_duration)
+trimmed_clip.write_audiofile("voiceover.wav", ffmpeg_params=["-ac", "1"])  # Trim + force mono
+
+# Clean up memory locks
+raw_audio_clip.close()
+trimmed_clip.close()
 print(f"Audio trimmed to {safe_duration:.1f}s")
 
 # --- 4. GET WORD-LEVEL TIMESTAMPS ---
 print("Syncing captions...")
 
-# ✅ Read actual sample rate from file — never guess
+# Read actual sample rate from file — never guess
 with wave.open("voiceover.wav", "rb") as wav_file:
     actual_sample_rate = wav_file.getframerate()
 print(f"Detected sample rate: {actual_sample_rate} Hz")
@@ -96,7 +110,7 @@ with open("voiceover.wav", "rb") as audio_file:
 audio_recognition = speech.RecognitionAudio(content=content)
 stt_config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-    sample_rate_hertz=actual_sample_rate,  # ✅ Always correct, never guessed
+    sample_rate_hertz=actual_sample_rate,  # Always correct, never guessed
     language_code="en-US",
     enable_word_time_offsets=True,
 )
@@ -118,7 +132,7 @@ print(f"Transcribed {len(all_words)} words.")
 # --- 5. PREPARE BACKGROUND VIDEO & CALCULATE DYNAMIC WIDTH ---
 print("Calculating dynamic text bounds...")
 full_video = VideoFileClip("background_loop.mp4")
-audio_clip = AudioFileClip("voiceover.wav")  # Reload trimmed version
+audio_clip = AudioFileClip("voiceover.wav")  # Load trimmed clean version
 
 MIN_SKIP = 26
 start_time = random.uniform(MIN_SKIP, max(MIN_SKIP, full_video.duration - safe_duration))
