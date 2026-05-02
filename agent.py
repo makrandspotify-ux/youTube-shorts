@@ -36,14 +36,25 @@ model = GenerativeModel("gemini-2.5-flash")
 # --- 2. GENERATE SCRIPT & VOICE ---
 print("Asking Gemini to choose an amazing topic...")
 topic_prompt = """
-Pick ONE insanely clickable YouTube Shorts topic for today.
+You are a viral YouTube Shorts strategist. Your job is to pick ONE topic for a short-form video that will make someone stop mid-scroll.
 
-Constraints:
-- Must be a real-world topic (e.g., bizarre historical facts, crazy science, deep ocean mysteries, space anomalies, true crime, or wildlife).
-- STRICTLY NO AI, tech, or futuristic meta-topics. Give me something real, grounded, and fascinating.
-- 6 to 12 words.
-- Not politics, not explicit, not medical advice.
-- Output ONLY the topic line. No quotes, no bullets, no extra text.
+A great topic has at least 2 of these:
+- A shocking contrast ("the deadliest X that looks completely harmless")
+- A counterintuitive fact ("why X actually does the opposite of what you think")
+- A hidden or suppressed truth ("the thing they don't teach you about X")
+- A visceral visual hook (something the viewer can picture immediately)
+- A scale that breaks intuition (impossibly big, small, fast, old, strange)
+
+Hard rules:
+- Real world ONLY: nature, history, ocean, space, animals, human body, geography, crime, psychology, ancient civilizations, disasters
+- NO AI, tech, politics, medicine, or religion
+- The topic must imply a story — not just a subject
+- 8 to 14 words
+- Write it like a half-finished thought that DEMANDS to be completed
+- Output ONLY the topic. No punctuation at the end. No quotes. No labels.
+
+Bad example: Deep ocean creatures
+Good example: The fish that dissolves itself alive before transforming into something else
 """.strip()
 
 trending_topic = model.generate_content(topic_prompt).text.strip()
@@ -52,11 +63,42 @@ trending_topic = re.sub(r'^[\'"\-\s]+|[\'"\-\s]+$', '', trending_topic).strip()
 print(f"Chosen topic: {trending_topic}")
 
 prompt = (
-    "Write a punchy YouTube Short script about: "
-    f"{trending_topic}. "
-    "No visual/audio cues, just spoken text. "
-    "Start with an aggressive stop-scrolling hook. "
-    "STRICT LENGTH: The script MUST be exactly between 140 and 155 words. This is critical to hit the 55-second audio mark."
+    "You are a top-tier YouTube Shorts scriptwriter. Your scripts don't just inform — they hijack attention and make skipping feel physically impossible.\n\n"
+    f"TOPIC: {trending_topic}\n\n"
+    "---\n\n"
+    "STRUCTURAL BLUEPRINT (follow this arc exactly):\n\n"
+    "[HOOK — Lines 1-2]\n"
+    "Open with a statement so strange, wrong-sounding, or visceral that stopping is involuntary.\n"
+    "NOT a question. NOT 'Did you know.' A declarative gut-punch.\n"
+    "Example pattern: 'A [creature/person/place] [did something that violates expectations] — and science still can't explain why.'\n\n"
+    "[PULL — Lines 3-5]\n"
+    "Instantly reward them for stopping. Give one concrete, specific detail that proves this is real and worth 55 seconds.\n"
+    "Kill all vagueness here. Numbers, names, places — make it tactile.\n\n"
+    "[ESCALATION — Lines 6-12]\n"
+    "This is the engine. Each sentence must make the next one feel inevitable.\n"
+    "Use these transitions sparingly but deliberately:\n"
+    "- 'But that's not even the strange part.'\n"
+    "- 'Here's where it breaks down.'\n"
+    "- 'Nobody talks about what happened next.'\n"
+    "Never summarize. Always reveal.\n\n"
+    "[REFRAME — Lines 13-15]\n"
+    "Flip the viewer's understanding of everything they just heard.\n"
+    "One fact that recontextualizes the whole story. This is your 'oh shit' moment.\n\n"
+    "[EXIT LINE — Line 16]\n"
+    "Do NOT end with 'so next time you...' or 'isn't that crazy?'\n"
+    "End with either:\n"
+    "  A) A lingering unresolved fact that haunts them ('And nobody has ever found it since.')\n"
+    "  B) A direct challenge that triggers comments ('Most people get this completely wrong.')\n\n"
+    "---\n\n"
+    "WRITING RULES:\n\n"
+    "- Sentence length: Vary it. Short. Then longer for rhythm. Then short again. Never 3 long sentences in a row.\n"
+    "- Every sentence must earn its place. If it doesn't escalate, reveal, or hook — cut it.\n"
+    "- No metaphors. No 'imagine if.' Ground everything in what actually happened.\n"
+    "- No filler openers: Never start with 'So,' 'Well,' 'Today,' 'In this video,' or 'Have you ever.'\n"
+    "- Write for the voice — read it aloud in your head. It must feel spoken, not written.\n"
+    "- Zero stage directions, labels, or formatting. Raw spoken text only.\n\n"
+    "STRICT LENGTH: 140-155 words exactly. Count before outputting.\n\n"
+    "OUTPUT: The script only. Nothing else."
 )
 
 print("Asking Gemini to write the script...")
