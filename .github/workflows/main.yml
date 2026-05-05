@@ -13,9 +13,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          lfs: true
-          fetch-depth: 0 # Forces it to fetch the entire fresh history
-          clean: true    # Wipes any leftover files from previous runs # Ensures your large background video is downloaded
+          lfs: false         # <-- FIXED: Explicitly disables LFS
+          fetch-depth: 1     # <-- FIXED: Ignores repository history to avoid the deleted giant video
+          clean: true        # Wipes any leftover files from previous runs
 
       - name: Set up Python
         uses: actions/setup-python@v4
