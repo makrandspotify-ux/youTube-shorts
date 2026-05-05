@@ -3,6 +3,7 @@ import re
 import random
 import wave
 import platform
+import glob
 import vertexai
 from vertexai.generative_models import GenerativeModel
 from google.cloud import texttospeech, speech
@@ -173,11 +174,22 @@ print(f"Transcribed {len(all_words)} words.")
 
 # --- 5. PREPARE BACKGROUND VIDEO & CALCULATE DYNAMIC WIDTH ---
 print("Calculating dynamic text bounds...")
-full_video = VideoFileClip("background_loop.mp4")
+
+# Find all split background parts in the folder
+bg_options = glob.glob("bg_part*.mp4")
+if not bg_options:
+    raise FileNotFoundError("Could not find any files starting with 'bg_part'")
+
+# Pick a random video file
+chosen_bg = random.choice(bg_options)
+print(f"Using background file: {chosen_bg}")
+
+full_video = VideoFileClip(chosen_bg)
 audio_clip = AudioFileClip("voiceover.wav")  # Load trimmed clean version
 
-MIN_SKIP = 26
-start_time = random.uniform(MIN_SKIP, max(MIN_SKIP, full_video.duration - safe_duration))
+# Calculate safe start time (removed MIN_SKIP to maximize flexibility on smaller clips)
+max_start = max(0, full_video.duration - safe_duration)
+start_time = random.uniform(0, max_start)
 video_bg = full_video.subclip(start_time, start_time + safe_duration)
 
 # Calculate exactly how wide the video will be AFTER the 9:16 crop
